@@ -5,6 +5,9 @@ function log {
     echo "$(date +'%Y-%m-%d %H:%M:%S') - $1"
 }
 
+# Définir l'encodage à UTF-8
+export LANG=C.UTF-8
+
 log "Début de l'application des nouvelles recommandations de durcissement..."
 
 # 1. Installation de libpam-tmpdir
@@ -25,14 +28,28 @@ apt-get install -y fail2ban
 systemctl enable fail2ban
 systemctl start fail2ban
 
-# 5. Analyse de la sécurité des services
+# 5. Vérification du service fail2ban
+log "Vérification du service fail2ban..."
+if systemctl is-active --quiet fail2ban; then
+    log "Le service fail2ban fonctionne correctement."
+else
+    log "Le service fail2ban ne fonctionne pas. Tentative de démarrage manuel..."
+    systemctl start fail2ban
+    if systemctl is-active --quiet fail2ban; then
+        log "Le service fail2ban a démarré avec succès."
+    else
+        log "Échec du démarrage du service fail2ban. Veuillez vérifier les logs pour plus de détails."
+    fi
+fi
+
+# 6. Analyse de la sécurité des services
 log "Analyse de la sécurité des services avec systemd-analyze security..."
 for service in $(systemctl list-units --type service --state running --no-pager --no-legend | awk '{print $1}'); do
     log "Sécurité du service : $service"
     systemd-analyze security $service
 done
 
-# 6. Désactivation explicite des core dumps
+# 7. Désactivation explicite des core dumps
 log "Désactivation explicite des core dumps..."
 echo "* hard core 0" >> /etc/security/limits.conf
 

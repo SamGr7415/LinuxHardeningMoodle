@@ -1,9 +1,15 @@
 #!/bin/bash
+set -euo pipefail
 
-# Fonction pour afficher un message
-function log {
+# Affiche un message horodaté
+log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') - $1"
 }
+
+if (( EUID != 0 )); then
+    echo "Ce script doit être exécuté en tant que root" >&2
+    exit 1
+fi
 
 log "Renforcement de la configuration de CUPS..."
 
@@ -18,8 +24,9 @@ log "Modification du fichier de configuration de CUPS pour restreindre l'accès 
 # Sauvegarder la configuration actuelle
 cp /etc/cups/cupsd.conf /etc/cups/cupsd.conf.bak
 
-# Modifier le fichier cupsd.conf pour restreindre l'accès à l'interface web
-cat <<EOF >> /etc/cups/cupsd.conf
+# Modifier le fichier cupsd.conf pour restreindre l'accès à l'interface web si cela n'a pas déjà été fait
+if ! grep -q "<Location />" /etc/cups/cupsd.conf; then
+cat <<'EOF' >> /etc/cups/cupsd.conf
 
 # Restreindre l'accès à l'interface web de CUPS
 <Location />
@@ -42,6 +49,7 @@ cat <<EOF >> /etc/cups/cupsd.conf
   Allow from ::1
 </Location>
 EOF
+fi
 
 # 3. Redémarrer le service CUPS pour appliquer les modifications
 log "Redémarrage du service CUPS..."

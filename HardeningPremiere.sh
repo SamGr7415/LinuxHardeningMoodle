@@ -1,8 +1,19 @@
 #!/bin/bash
+set -euo pipefail
 
-# Fonction pour afficher un message
-function log {
+# Affiche un message horodaté
+log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') - $1"
+}
+
+# Vérifie que le script est exécuté en tant que root
+if (( EUID != 0 )); then
+    echo "Ce script doit être exécuté en tant que root" >&2
+    exit 1
+fi
+
+install_packages() {
+    apt-get install -y "$@"
 }
 
 log "Début du durcissement du serveur Moodle..."
@@ -13,15 +24,15 @@ apt-get update && apt-get upgrade -y
 
 # 2. Désactiver les services inutiles
 log "Désactivation des services non nécessaires..."
-systemctl disable avahi-daemon
-systemctl disable cups
-systemctl disable bluetooth
-systemctl disable rpcbind
+services_to_disable=(avahi-daemon cups bluetooth rpcbind)
+for svc in "${services_to_disable[@]}"; do
+    systemctl disable "$svc"
+done
 
 # 3. Configuration de l'UMASK
 log "Configuration de l'UMASK..."
-echo "UMASK 027" >> /etc/login.defs
-sed -i 's/UMASK.*022/UMASK 027/' /etc/profile
+grep -q '^UMASK 027' /etc/login.defs || echo 'UMASK 027' >> /etc/login.defs
+sed -i 's/^UMASK.*/UMASK 027/' /etc/profile
 
 # 4. Configuration du chargeur de démarrage
 log "Configuration du chargeur de démarrage..."
@@ -39,7 +50,7 @@ chmod -R 750 /var/www/moodle_data
 
 # 6. Configuration de AppArmor
 log "Configuration de AppArmor..."
-apt-get install -y apparmor apparmor-utils
+install_packages apparmor apparmor-utils
 systemctl enable apparmor
 systemctl start apparmor
 
@@ -56,7 +67,7 @@ apt-get update
 
 # 8. Mise en place d'un système de journalisation
 log "Configuration du système de journalisation..."
-apt-get install -y auditd
+install_packages auditd
 systemctl enable auditd
 auditctl -e 1
 cat <<EOF > /etc/audit/rules.d/audit.rules
@@ -71,7 +82,7 @@ EOF
 
 # 9. Surveillance de l'intégrité des fichiers
 log "Installation et configuration de AIDE..."
-apt-get install -y aide
+install_packages aide
 aideinit
 mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
 echo "0 0 * * * /usr/bin/aide --check" >> /etc/crontab
@@ -88,14 +99,13 @@ systemctl reload sshd
 
 # 11. Mise en place du pare-feu
 log "Configuration du pare-feu avec UFW..."
-apt-get install -y ufw
+install_packages ufw
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 1514/tcp  # Port par défaut de Wazuh
-ufw allow 10050/tcp # Port par défaut de Zabbix
+ports=(22 80 443 1514 10050)
+for port in "${ports[@]}"; do
+    ufw allow "$port"/tcp
+done
 ufw enable
 
 # 12. Paramètres de sécurité du noyau
@@ -126,7 +136,7 @@ sysctl --system
 
 # 13. Sauvegardes régulières
 log "Configuration des sauvegardes régulières..."
-apt-get install -y rsync
+install_packages rsync
 mkdir -p /var/backups/moodle
 crontab -l | { cat; echo "0 2 * * * rsync -a /var/www/moodle /var/backups/moodle"; } | crontab -
 
@@ -144,7 +154,7 @@ chown -R root:root /etc/sudoers.d
 
 # 16. Politique de mot de passe stricte
 log "Application de politiques de mot de passe strictes..."
-apt-get install -y libpam-pwquality
+install_packages libpam-pwquality
 cat <<EOF > /etc/pam.d/common-password
 password requisite pam_pwquality.so retry=3 minlen=12 difok=3 ucredit=-1 lcredit=-1 dcredit=-1 ocredit=-1
 password [success=1 default=ignore] pam_unix.so obscure use_authtok try_first_pass sha512
@@ -152,7 +162,7 @@ EOF
 
 # 17. Application des correctifs de sécurité
 log "Application des correctifs de sécurité..."
-apt-get install -y unattended-upgrades
+install_packages unattended-upgrades
 dpkg-reconfigure -plow unattended-upgrades
 
 # 18. Nettoyage final

@@ -1,20 +1,27 @@
 #!/bin/bash
+set -euo pipefail
 
 # Fonction pour générer un mot de passe aléatoire
 generate_password() {
-  tr -dc A-Za-z0-9 </dev/urandom | head -c 20
+  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20
 }
+
+# Vérifie que le script est exécuté en tant que root
+if (( EUID != 0 )); then
+  echo "Ce script doit être exécuté en tant que root" >&2
+  exit 1
+fi
 
 # Générer des mots de passe aléatoires
 MARIADB_ROOT_PASSWORD=$(generate_password)
 MOODLE_DB_PASSWORD=$(generate_password)
 
 # Mettre à jour la liste des paquets et les paquets
-apt update
-apt upgrade -y
+apt update && apt upgrade -y
 
 # Installer les paquets nécessaires
-apt install -y apache2 mariadb-server php libapache2-mod-php php-mysql php-xml php-curl php-zip php-gd php-intl php-mbstring git
+apt install -y apache2 mariadb-server php libapache2-mod-php \
+  php-mysql php-xml php-curl php-zip php-gd php-intl php-mbstring git
 
 # Démarrer le service MariaDB
 systemctl start mariadb
@@ -40,7 +47,7 @@ cd /var/www/html
 if [ ! -d "$MOODLE_DIR" ]; then
   git clone git://git.moodle.org/moodle.git moodle
   cd moodle
-  git checkout -b $MOODLE_VERSION origin/$MOODLE_VERSION
+  git checkout -b "$MOODLE_VERSION" "origin/$MOODLE_VERSION"
 else
   echo "Le répertoire Moodle existe déjà. Clonage ignoré."
 fi
@@ -54,11 +61,11 @@ else
 fi
 
 # Définir les permissions correctes
-chown -R www-data:www-data $MOODLE_DIR
-chmod -R 755 $MOODLE_DIR
+chown -R www-data:www-data "$MOODLE_DIR"
+chmod -R 755 "$MOODLE_DIR"
 
 # Créer la base de données et l'utilisateur pour Moodle
-mysql --user=root --password=$MARIADB_ROOT_PASSWORD <<_EOF_
+mysql --user=root --password="$MARIADB_ROOT_PASSWORD" <<_EOF_
   CREATE DATABASE IF NOT EXISTS moodle DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
   CREATE USER IF NOT EXISTS 'moodleuser'@'localhost' IDENTIFIED BY '${MOODLE_DB_PASSWORD}';
   GRANT ALL PRIVILEGES ON moodle.* TO 'moodleuser'@'localhost';
@@ -67,9 +74,9 @@ _EOF_
 
 # Enregistrer les mots de passe dans un fichier sécurisé
 PASSWORD_FILE=/root/mariadb_passwords.txt
-echo "Mot de passe root MariaDB: ${MARIADB_ROOT_PASSWORD}" > $PASSWORD_FILE
-echo "Mot de passe de l'utilisateur de la base de données Moodle 'moodleuser': ${MOODLE_DB_PASSWORD}" >> $PASSWORD_FILE
-chmod 600 $PASSWORD_FILE
+echo "Mot de passe root MariaDB: ${MARIADB_ROOT_PASSWORD}" > "$PASSWORD_FILE"
+echo "Mot de passe de l'utilisateur de la base de données Moodle 'moodleuser': ${MOODLE_DB_PASSWORD}" >> "$PASSWORD_FILE"
+chmod 600 "$PASSWORD_FILE"
 
 # Créer un hôte virtuel pour Moodle
 if [ ! -f "/etc/apache2/sites-available/moodle.conf" ]; then
@@ -101,7 +108,8 @@ systemctl restart apache2
 apt install -y certbot python3-certbot-apache
 
 # Obtenir le certificat SSL pour le domaine
-certbot --apache -d academicefrei.site --non-interactif --agree-tos -m votre-email@academicefrei.site
+DOMAIN=academicefrei.site
+certbot --apache -d "$DOMAIN" --non-interactif --agree-tos -m "votre-email@$DOMAIN"
 
 # Configurer le renouvellement automatique
 echo "0 0,12 * * * root certbot renew --quiet" > /etc/cron.d/certbot-renew
@@ -117,7 +125,7 @@ echo "Les mots de passe ont été sauvegardés dans ${PASSWORD_FILE}."
 echo "Veuillez ouvrir votre navigateur et naviguer vers http://academicefrei.site pour compléter l'installation via l'interface web."
 
 # Vérifier et afficher les utilisateurs MariaDB
-mysql --user=root --password=$MARIADB_ROOT_PASSWORD <<_EOF_
+mysql --user=root --password="$MARIADB_ROOT_PASSWORD" <<_EOF_
   SELECT User, Host FROM mysql.user;
   SHOW GRANTS FOR 'moodleuser'@'localhost';
 _EOF_
